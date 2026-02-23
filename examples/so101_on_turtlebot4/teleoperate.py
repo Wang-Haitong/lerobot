@@ -173,7 +173,6 @@ def build_distributed(args):
     teleop = ROS2Teleoperator(
         ROS2TeleopConfig(
             arm_topic=args.arm_topic,
-            base_topic=args.cmd_vel_topic,
         )
     )
     return robot, teleop

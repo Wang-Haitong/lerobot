@@ -12,20 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""ROS2-based teleoperator that receives actions from remote sources.
+"""ROS2-based teleoperator for distributed mode.
 
-Implements the LeRobot :class:`Teleoperator` interface.  Subscribes to:
+Subscribes to ``/lerobot/arm_commands`` (``JointState``) from
+``leader_teleop.py`` on the operator laptop.
 
-- ``/lerobot/arm_commands`` (``JointState``) — arm joint targets from
-  ``leader_teleop.py`` on the operator machine.
-- ``/cmd_vel`` (``TwistStamped``) — base velocity commands from
-  ``teleop_twist_keyboard`` (or any other source publishing to ``/cmd_vel``).
-
-Action keys::
-
-    arm_shoulder_pan.pos, arm_shoulder_lift.pos, arm_elbow_flex.pos,
-    arm_wrist_flex.pos, arm_wrist_roll.pos, arm_gripper.pos,
-    base_linear.vel, base_angular.vel
+Optionally subscribes to ``/cmd_vel`` to capture base velocity for recording.
+The base is always driven directly by teleop_twist_keyboard → TurtleBot4
+firmware; this class never re-publishes base commands.
 """
 
 import logging
@@ -36,7 +30,6 @@ from pathlib import Path
 from typing import Any
 
 import rclpy
-from geometry_msgs.msg import TwistStamped
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
@@ -69,25 +62,15 @@ class ROS2TeleopConfig:
     id: str | None = "ros2_teleop"
     calibration_dir: Path | None = None
 
-    # ROS2 topics
-    arm_topic: str = "/lerobot/arm_commands"  # JointState from leader_teleop.py
-    base_topic: str = "/cmd_vel"  # TwistStamped from teleop_twist_keyboard
+    arm_topic: str = "/lerobot/arm_commands"
+
+    # Set to a topic (e.g. "/cmd_vel") to also capture base velocity for recording.
+    # None means arm-only (used in teleoperate.py where the base is handled externally).
+    base_topic: str | None = None
 
 
 class ROS2Teleoperator(Teleoperator):
-    """Receives teleoperator actions from ROS2 topics published by the leader.
-
-    This class bridges the network gap in the distributed teleoperation setup:
-    the leader arm and keyboard are on the operator machine, and this teleoperator
-    runs on the Pi, receiving their commands over ROS2.
-
-    Usage::
-
-        teleop = ROS2Teleoperator(ROS2TeleopConfig())
-        teleop.connect()        # creates ROS2 node, starts spin thread
-        action = teleop.get_action()  # returns latest commands from leader
-        teleop.disconnect()
-    """
+    """Receives arm commands (and optionally base velocity) over ROS2."""
 
     config_class = ROS2TeleopConfig
     name = "ros2_teleop"
@@ -104,30 +87,24 @@ class ROS2Teleoperator(Teleoperator):
         self._arm_cmd: dict[str, float] = {}
         self._base_cmd: dict[str, float] = {}
 
-    # ------------------------------------------------------------------
-    # Teleoperator interface: features
-    # ------------------------------------------------------------------
-
     @cached_property
     def action_features(self) -> dict[str, type]:
-        return {
+        ft: dict[str, type] = {
             f"{_ARM}shoulder_pan.pos": float,
             f"{_ARM}shoulder_lift.pos": float,
             f"{_ARM}elbow_flex.pos": float,
             f"{_ARM}wrist_flex.pos": float,
             f"{_ARM}wrist_roll.pos": float,
             f"{_ARM}gripper.pos": float,
-            f"{_BASE}linear.vel": float,
-            f"{_BASE}angular.vel": float,
         }
+        if self.config.base_topic is not None:
+            ft[f"{_BASE}linear.vel"] = float
+            ft[f"{_BASE}angular.vel"] = float
+        return ft
 
     @cached_property
     def feedback_features(self) -> dict:
         return {}
-
-    # ------------------------------------------------------------------
-    # Teleoperator interface: connection lifecycle
-    # ------------------------------------------------------------------
 
     @property
     def is_connected(self) -> bool:
@@ -135,14 +112,17 @@ class ROS2Teleoperator(Teleoperator):
 
     @check_if_already_connected
     def connect(self, calibrate: bool = False) -> None:
-        """Create a ROS2 subscriber node and start a background spin thread."""
         if not rclpy.ok():
             rclpy.init()
 
         qos = _make_teleop_qos()
         self._node = rclpy.create_node("lerobot_ros2_teleop")
         self._node.create_subscription(JointState, self.config.arm_topic, self._arm_cb, qos)
-        self._node.create_subscription(TwistStamped, self.config.base_topic, self._base_cb, qos)
+
+        if self.config.base_topic is not None:
+            from geometry_msgs.msg import TwistStamped
+
+            self._node.create_subscription(TwistStamped, self.config.base_topic, self._base_cb, qos)
 
         self._executor = SingleThreadedExecutor()
         self._executor.add_node(self._node)
@@ -151,10 +131,7 @@ class ROS2Teleoperator(Teleoperator):
         )
         self._spin_thread.start()
         self._connected = True
-        logger.info(
-            f"ROS2Teleoperator connected. Listening on '{self.config.arm_topic}' "
-            f"and '{self.config.base_topic}'."
-        )
+        logger.info(f"ROS2Teleoperator connected. Listening on '{self.config.arm_topic}'.")
 
     @check_if_not_connected
     def disconnect(self) -> None:
@@ -164,10 +141,6 @@ class ROS2Teleoperator(Teleoperator):
         if self._node is not None:
             self._node.destroy_node()
         logger.info("ROS2Teleoperator disconnected.")
-
-    # ------------------------------------------------------------------
-    # Teleoperator interface: calibration (no-op)
-    # ------------------------------------------------------------------
 
     @property
     def is_calibrated(self) -> bool:
@@ -179,28 +152,19 @@ class ROS2Teleoperator(Teleoperator):
     def configure(self) -> None:
         pass
 
-    # ------------------------------------------------------------------
-    # ROS2 callbacks (called from the spin thread)
-    # ------------------------------------------------------------------
-
     def _arm_cb(self, msg: JointState) -> None:
         with self._lock:
             self._arm_cmd = dict(zip(msg.name, msg.position))
 
-    def _base_cb(self, msg: TwistStamped) -> None:
+    def _base_cb(self, msg) -> None:
         with self._lock:
             self._base_cmd = {
                 "linear.vel": msg.twist.linear.x,
                 "angular.vel": msg.twist.angular.z,
             }
 
-    # ------------------------------------------------------------------
-    # Teleoperator interface: action / feedback
-    # ------------------------------------------------------------------
-
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        """Return the latest commands from the remote leader."""
         with self._lock:
             arm_cmd = dict(self._arm_cmd)
             base_cmd = dict(self._base_cmd)
@@ -208,9 +172,10 @@ class ROS2Teleoperator(Teleoperator):
         action: dict[str, float] = {}
         for k, v in arm_cmd.items():
             action[f"{_ARM}{k}"] = float(v)
-        action[f"{_BASE}linear.vel"] = float(base_cmd.get("linear.vel", 0.0))
-        action[f"{_BASE}angular.vel"] = float(base_cmd.get("angular.vel", 0.0))
+        if self.config.base_topic is not None:
+            action[f"{_BASE}linear.vel"] = float(base_cmd.get("linear.vel", 0.0))
+            action[f"{_BASE}angular.vel"] = float(base_cmd.get("angular.vel", 0.0))
         return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
-        pass  # No haptic feedback
+        pass

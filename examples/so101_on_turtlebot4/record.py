@@ -166,8 +166,6 @@ def main():
     # ROS2 teleop topics
     parser.add_argument("--arm_topic", default="/lerobot/arm_commands", help="ROS2 topic for arm commands from leader.")
     parser.add_argument("--cmd_vel_record_topic", default="/cmd_vel", help="ROS2 topic to capture base velocity commands for recording.")
-    # Watchdog
-    parser.add_argument("--watchdog_timeout", type=float, default=0.5, help="Seconds before watchdog stops robot.")
 
     args = parser.parse_args()
     init_logging()
@@ -193,7 +191,6 @@ def main():
         ROS2TeleopConfig(
             arm_topic=args.arm_topic,
             base_topic=args.cmd_vel_record_topic,
-            watchdog_timeout_s=args.watchdog_timeout,
         )
     )
 
