@@ -174,7 +174,6 @@ def build_distributed(args):
         ROS2TeleopConfig(
             arm_topic=args.arm_topic,
             base_topic=args.cmd_vel_topic,
-            watchdog_timeout_s=args.watchdog_timeout,
         )
     )
     return robot, teleop
@@ -213,7 +212,6 @@ def main():
     parser.add_argument("--keyboard_angular_speed", type=float, default=0.5, help="Initial keyboard angular speed (rad/s).")
     # Distributed mode settings
     parser.add_argument("--arm_topic", default="/lerobot/arm_commands", help="ROS2 topic for arm JointState commands (distributed mode).")
-    parser.add_argument("--watchdog_timeout", type=float, default=0.5, help="Seconds before watchdog holds arm (distributed mode).")
 
     args = parser.parse_args()
     init_logging()

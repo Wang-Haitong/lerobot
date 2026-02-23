@@ -26,15 +26,10 @@ Action keys::
     arm_shoulder_pan.pos, arm_shoulder_lift.pos, arm_elbow_flex.pos,
     arm_wrist_flex.pos, arm_wrist_roll.pos, arm_gripper.pos,
     base_linear.vel, base_angular.vel
-
-Includes a 500 ms watchdog (matching the LeKiwi host pattern): if no
-commands arrive for the timeout period, ``get_action()`` returns zero base
-velocity and repeats the last arm position (hold in place).
 """
 
 import logging
 import threading
-import time
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -77,10 +72,6 @@ class ROS2TeleopConfig:
     arm_topic: str = "/lerobot/arm_commands"  # JointState from leader_teleop.py
     base_topic: str = "/cmd_vel"  # TwistStamped from teleop_twist_keyboard
 
-    # Watchdog: seconds without a message before returning a hold/stop action.
-    # Matches the LeKiwi host default (500 ms).
-    watchdog_timeout_s: float = 0.5
-
 
 class ROS2Teleoperator(Teleoperator):
     """Receives teleoperator actions from ROS2 topics published by the leader.
@@ -107,13 +98,9 @@ class ROS2Teleoperator(Teleoperator):
         self._node: Node | None = None
         self._spin_thread: threading.Thread | None = None
 
-        # Shared state written by callbacks, read by get_action().
         self._lock = threading.Lock()
         self._arm_cmd: dict[str, float] = {}
         self._base_cmd: dict[str, float] = {}
-        self._last_arm_time: float = 0.0
-        self._last_base_time: float = 0.0
-        self._watchdog_warned: bool = False
 
     # ------------------------------------------------------------------
     # Teleoperator interface: features
@@ -193,7 +180,6 @@ class ROS2Teleoperator(Teleoperator):
     def _arm_cb(self, msg: JointState) -> None:
         with self._lock:
             self._arm_cmd = dict(zip(msg.name, msg.position))
-            self._last_arm_time = time.monotonic()
 
     def _base_cb(self, msg: TwistStamped) -> None:
         with self._lock:
@@ -201,7 +187,6 @@ class ROS2Teleoperator(Teleoperator):
                 "linear.vel": msg.twist.linear.x,
                 "angular.vel": msg.twist.angular.z,
             }
-            self._last_base_time = time.monotonic()
 
     # ------------------------------------------------------------------
     # Teleoperator interface: action / feedback
@@ -209,48 +194,16 @@ class ROS2Teleoperator(Teleoperator):
 
     @check_if_not_connected
     def get_action(self) -> RobotAction:
-        """Return the latest commands from the remote leader.
-
-        Watchdog behaviour (matches LeKiwi host, ``lekiwi_host.py:71-98``):
-        - If arm commands are stale, repeat the last received arm position (hold).
-        - If base commands are stale, return zero velocity (stop).
-        """
-        now = time.monotonic()
-        timeout = self.config.watchdog_timeout_s
-
+        """Return the latest commands from the remote leader."""
         with self._lock:
             arm_cmd = dict(self._arm_cmd)
             base_cmd = dict(self._base_cmd)
-            arm_stale = (now - self._last_arm_time > timeout) if self._last_arm_time > 0 else True
-            base_stale = (now - self._last_base_time > timeout) if self._last_base_time > 0 else True
-
-        all_stale = arm_stale and base_stale
-        if all_stale and not self._watchdog_warned:
-            logger.warning(
-                f"No commands received for {timeout * 1000:.0f} ms. "
-                "Holding arm position and stopping base (watchdog)."
-            )
-            self._watchdog_warned = True
-        elif not all_stale and self._watchdog_warned:
-            logger.info("Commands resumed. Watchdog cleared.")
-            self._watchdog_warned = False
 
         action: dict[str, float] = {}
-
-        # Arm: use latest commands (even if stale — repeating last position holds the arm).
-        # If we never received any commands, the dict is empty and the robot will
-        # fall through to its own default behaviour.
         for k, v in arm_cmd.items():
             action[f"{_ARM}{k}"] = float(v)
-
-        # Base: zero velocity when stale (safety stop).
-        if not base_stale and base_cmd:
-            for k, v in base_cmd.items():
-                action[f"{_BASE}{k}"] = float(v)
-        else:
-            action[f"{_BASE}linear.vel"] = 0.0
-            action[f"{_BASE}angular.vel"] = 0.0
-
+        action[f"{_BASE}linear.vel"] = float(base_cmd.get("linear.vel", 0.0))
+        action[f"{_BASE}angular.vel"] = float(base_cmd.get("angular.vel", 0.0))
         return action
 
     def send_feedback(self, feedback: dict[str, Any]) -> None:
