@@ -6,7 +6,7 @@ Teleoperation and data recording for a SO-ARM 101 mounted on a TurtleBot4 mobile
 
 | File | Description |
 |------|-------------|
-| `teleoperate.py` | Single-machine teleoperation (arm-only or arm+base). |
+| `teleoperate.py` | Teleoperation entry point (arm-only, arm+base single-machine, or distributed). |
 | `leader_teleop.py` | Leader-side node for distributed teleoperation — publishes arm commands over ROS2 (runs on server/laptop). |
 | `follower_node.py` | Follower-side node for distributed teleoperation without recording (runs on Pi). |
 | `record.py` | Data recording for distributed teleoperation (runs on Pi, saves to LeRobotDataset). |
@@ -35,18 +35,32 @@ python teleoperate.py --mode arm_only \
 
 ### Distributed arm + base teleoperation (two machines)
 
-Leader arm on the operator's machine, follower arm + TurtleBot4 on the Pi.
+Leader arm on the operator's laptop, follower arm + TurtleBot4 on the Pi.
 Base is controlled via the standard `teleop_twist_keyboard` node.
+
+**Option A — via `teleoperate.py` (recommended):**
+
+```bash
+# On the Pi (only follower_port needed — no leader arm here):
+python teleoperate.py --mode distributed \
+    --follower_port /dev/ttyACM0
+
+# On the operator's laptop (two terminals):
+# Terminal 1 — arm teleoperation:
+python leader_teleop.py --leader_port /dev/ttyACM0
+
+# Terminal 2 — base teleoperation:
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true
+```
+
+**Option B — via `follower_node.py` directly:**
 
 ```bash
 # On the Pi:
 python follower_node.py --follower_port /dev/ttyACM0
 
-# On the operator's machine (two terminals):
-# Terminal 1 — arm teleoperation:
+# On the operator's laptop (two terminals):
 python leader_teleop.py --leader_port /dev/ttyACM0
-
-# Terminal 2 — base teleoperation:
 ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true
 ```
 

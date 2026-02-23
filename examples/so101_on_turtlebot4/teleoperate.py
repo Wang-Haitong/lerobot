@@ -15,15 +15,20 @@
 
 """Teleoperation script for SO-ARM 101 mounted on a TurtleBot4.
 
-Two modes:
+Three modes:
 
-  arm_only  — SO-ARM 101 leader → SO-ARM 101 follower only.
-              No ROS2 required. Useful for arm-only data collection on any machine.
-              Equivalent to the built-in lerobot-teleoperate CLI.
+  arm_only     — SO-ARM 101 leader → SO-ARM 101 follower only.
+                 No ROS2 required. Useful for arm-only data collection on any machine.
+                 Equivalent to the built-in lerobot-teleoperate CLI.
 
-  arm_base  — SO-ARM 101 leader  → SO-ARM 101 follower arm (joint positions)
-              Keyboard (WASD)    → TurtleBot4 base (velocity, via ROS2 Jazzy)
-              Requires ROS2 Jazzy to be sourced. Designed to run on the TurtleBot4.
+  arm_base     — SO-ARM 101 leader  → SO-ARM 101 follower arm (joint positions)
+                 Keyboard (WASD)    → TurtleBot4 base (velocity, via ROS2 Jazzy)
+                 Requires ROS2 Jazzy to be sourced. Both leader and follower on same machine.
+
+  distributed  — Follower arm + TurtleBot4 base on the robot (Pi).
+                 Leader arm on the laptop (runs leader_teleop.py separately).
+                 Arm commands arrive via ROS2 JointState; base via /cmd_vel.
+                 Only the follower_port is needed on the robot side.
 
 Usage::
 
@@ -32,10 +37,17 @@ Usage::
         --follower_port /dev/ttyACM0 \\
         --leader_port   /dev/ttyACM1
 
-    # Arm + base (run on TurtleBot4 or any ROS2-networked machine):
+    # Arm + base, same machine (run on TurtleBot4 or any ROS2-networked machine):
     python teleoperate.py --mode arm_base \\
         --follower_port /dev/ttyACM0 \\
         --leader_port   /dev/ttyACM1
+
+    # Distributed: robot side (run on TurtleBot4 / Pi):
+    python teleoperate.py --mode distributed \\
+        --follower_port /dev/ttyACM0
+
+    # Distributed: laptop side (run on operator laptop):
+    python leader_teleop.py --leader_port /dev/ttyACM0
 
 Keyboard controls (arm_base mode — base only):
     W / S     Forward / backward
@@ -135,6 +147,39 @@ def build_arm_base(args):
     return robot, teleop
 
 
+def build_distributed(args):
+    """Instantiate robot-side components for distributed teleoperation.
+
+    The follower arm + TurtleBot4 base run here (on the robot / Pi).
+    The leader arm runs on the laptop via leader_teleop.py, sending arm
+    commands over ROS2. Base commands come from teleop_twist_keyboard on /cmd_vel.
+    No leader_port is needed on this side.
+    """
+    from so101_turtlebot4_robot import SO101TurtleBot4Config, SO101TurtleBot4Robot
+
+    from ros2_teleop import ROS2Teleoperator, ROS2TeleopConfig
+
+    robot = SO101TurtleBot4Robot(
+        SO101TurtleBot4Config(
+            id=args.follower_id,
+            follower_port=args.follower_port,
+            arm_id=args.follower_id,
+            cmd_vel_topic=args.cmd_vel_topic,
+            odom_topic=args.odom_topic,
+            max_linear_vel=args.max_linear_vel,
+            max_angular_vel=args.max_angular_vel,
+        )
+    )
+    teleop = ROS2Teleoperator(
+        ROS2TeleopConfig(
+            arm_topic=args.arm_topic,
+            base_topic=args.cmd_vel_topic,
+            watchdog_timeout_s=args.watchdog_timeout,
+        )
+    )
+    return robot, teleop
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="SO-ARM 101 + TurtleBot4 teleoperation",
@@ -143,8 +188,12 @@ def main():
     parser.add_argument(
         "--mode",
         default="arm_base",
-        choices=["arm_only", "arm_base"],
-        help="arm_only: arm leader→follower only (no ROS2). arm_base: arm+keyboard→arm+TurtleBot4 (ROS2 required).",
+        choices=["arm_only", "arm_base", "distributed"],
+        help=(
+            "arm_only: arm leader→follower only (no ROS2). "
+            "arm_base: arm+keyboard→arm+TurtleBot4, same machine (ROS2 required). "
+            "distributed: follower+base on robot, leader on laptop via ROS2."
+        ),
     )
     # Hardware ports
     parser.add_argument("--follower_port", default="/dev/ttyACM0", help="Serial port for SO-ARM 101 follower.")
@@ -162,6 +211,9 @@ def main():
     # Keyboard speed settings
     parser.add_argument("--keyboard_linear_speed", type=float, default=0.2, help="Initial keyboard linear speed (m/s).")
     parser.add_argument("--keyboard_angular_speed", type=float, default=0.5, help="Initial keyboard angular speed (rad/s).")
+    # Distributed mode settings
+    parser.add_argument("--arm_topic", default="/lerobot/arm_commands", help="ROS2 topic for arm JointState commands (distributed mode).")
+    parser.add_argument("--watchdog_timeout", type=float, default=0.5, help="Seconds before watchdog holds arm (distributed mode).")
 
     args = parser.parse_args()
     init_logging()
@@ -172,9 +224,21 @@ def main():
     elif args.mode == "arm_base":
         logger.info("Mode: arm_base — requires ROS2 Jazzy. Use WASD to drive, leader arm to control the arm.")
         robot, teleop = build_arm_base(args)
+    elif args.mode == "distributed":
+        logger.info(
+            "Mode: distributed — follower + base on this machine. "
+            "Run leader_teleop.py on the laptop for arm control, "
+            "teleop_twist_keyboard for base control."
+        )
+        robot, teleop = build_distributed(args)
     else:
         logger.error(f"Unknown mode: {args.mode}")
         sys.exit(1)
+
+    # Distributed mode needs rclpy initialized before connecting.
+    if args.mode == "distributed":
+        import rclpy
+        rclpy.init()
 
     try:
         teleop.connect()
@@ -186,6 +250,10 @@ def main():
     finally:
         robot.disconnect()
         teleop.disconnect()
+        if args.mode == "distributed":
+            import rclpy
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 if __name__ == "__main__":
