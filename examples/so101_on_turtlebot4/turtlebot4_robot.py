@@ -34,6 +34,7 @@ from pathlib import Path
 import rclpy
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 
@@ -86,6 +87,7 @@ class TurtleBot4Robot(Robot):
         self._connected: bool = False
         self._owns_rclpy: bool = False
         self._node: Node | None = None
+        self._executor: SingleThreadedExecutor | None = None
         self._spin_thread: threading.Thread | None = None
         self._last_linear_vel: float = 0.0
         self._last_angular_vel: float = 0.0
@@ -134,10 +136,10 @@ class TurtleBot4Robot(Robot):
             qos_profile_sensor_data,
         )
 
-        # Spin in a daemon thread so the control loop is not blocked.
+        self._executor = SingleThreadedExecutor()
+        self._executor.add_node(self._node)
         self._spin_thread = threading.Thread(
-            target=rclpy.spin,
-            args=(self._node,),
+            target=self._executor.spin,
             daemon=True,
             name="turtlebot4_spin",
         )
@@ -153,6 +155,8 @@ class TurtleBot4Robot(Robot):
         """Publish a zero-velocity command (safety stop), then shut down the node."""
         self._cmd_vel_pub.publish(TwistStamped())  # stop the base
         self._connected = False
+        if self._executor is not None:
+            self._executor.shutdown()
         self._node.destroy_node()
         if self._owns_rclpy and rclpy.ok():
             rclpy.shutdown()

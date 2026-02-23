@@ -179,10 +179,11 @@ class SO101TurtleBot4Robot(Robot):
         arm_action = {k.removeprefix(_ARM): v for k, v in action.items() if k.startswith(_ARM)}
         base_action = {k.removeprefix(_BASE): v for k, v in action.items() if k.startswith(_BASE)}
 
-        sent_arm = self.arm.send_action(arm_action)
-        sent_base = self.base.send_action(base_action)
-
-        return {
-            **{f"{_ARM}{k}": v for k, v in sent_arm.items()},
-            **{f"{_BASE}{k}": v for k, v in sent_base.items()},
-        }
+        sent: dict[str, float] = {}
+        if arm_action:
+            sent_arm = self.arm.send_action(arm_action)
+            sent.update({f"{_ARM}{k}": v for k, v in sent_arm.items()})
+        if base_action:
+            sent_base = self.base.send_action(base_action)
+            sent.update({f"{_BASE}{k}": v for k, v in sent_base.items()})
+        return sent

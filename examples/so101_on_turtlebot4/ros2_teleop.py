@@ -37,6 +37,7 @@ from typing import Any
 
 import rclpy
 from geometry_msgs.msg import TwistStamped
+from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import JointState
@@ -96,6 +97,7 @@ class ROS2Teleoperator(Teleoperator):
         self.config = config
         self._connected: bool = False
         self._node: Node | None = None
+        self._executor: SingleThreadedExecutor | None = None
         self._spin_thread: threading.Thread | None = None
 
         self._lock = threading.Lock()
@@ -142,8 +144,10 @@ class ROS2Teleoperator(Teleoperator):
         self._node.create_subscription(JointState, self.config.arm_topic, self._arm_cb, qos)
         self._node.create_subscription(TwistStamped, self.config.base_topic, self._base_cb, qos)
 
+        self._executor = SingleThreadedExecutor()
+        self._executor.add_node(self._node)
         self._spin_thread = threading.Thread(
-            target=rclpy.spin, args=(self._node,), daemon=True, name="ros2_teleop_spin"
+            target=self._executor.spin, daemon=True, name="ros2_teleop_spin"
         )
         self._spin_thread.start()
         self._connected = True
@@ -155,6 +159,8 @@ class ROS2Teleoperator(Teleoperator):
     @check_if_not_connected
     def disconnect(self) -> None:
         self._connected = False
+        if self._executor is not None:
+            self._executor.shutdown()
         if self._node is not None:
             self._node.destroy_node()
         logger.info("ROS2Teleoperator disconnected.")
