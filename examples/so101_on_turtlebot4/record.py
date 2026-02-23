@@ -161,7 +161,7 @@ def main():
     # TurtleBot4 base settings
     parser.add_argument("--cmd_vel_topic", default="/cmd_vel", help="ROS2 topic for base velocity.")
     parser.add_argument("--odom_topic", default="/odom", help="ROS2 topic for odometry.")
-    parser.add_argument("--max_linear_vel", type=float, default=0.3, help="Safety cap on linear velocity (m/s).")
+    parser.add_argument("--max_linear_vel", type=float, default=0.5, help="Safety cap on linear velocity (m/s).")
     parser.add_argument("--max_angular_vel", type=float, default=1.0, help="Safety cap on angular velocity (rad/s).")
     # ROS2 teleop topics
     parser.add_argument("--arm_topic", default="/lerobot/arm_commands", help="ROS2 topic for arm commands from leader.")
