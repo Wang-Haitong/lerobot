@@ -31,6 +31,7 @@ from functools import cached_property
 from pathlib import Path
 
 from lerobot.cameras.configs import CameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.processor import RobotAction, RobotObservation
 from lerobot.robots.robot import Robot
 from lerobot.robots.so_follower import SOFollower, SOFollowerConfig, SOFollowerRobotConfig
@@ -63,8 +64,10 @@ class SO101TurtleBot4Config:
     arm_max_relative_target: float | dict | None = None
     arm_use_degrees: bool = True
 
-    # Cameras (passed through to SOFollower; default empty, same as lerobot)
-    cameras: dict[str, CameraConfig] = field(default_factory=dict)
+    # Cameras (passed through to SOFollower)
+    cameras: dict[str, CameraConfig] = field(default_factory=lambda: {
+        "front": OpenCVCameraConfig(index_or_path=0, fps=30, width=640, height=480),
+    })
 
     # TurtleBot4 base settings
     cmd_vel_topic: str = "/cmd_vel"
