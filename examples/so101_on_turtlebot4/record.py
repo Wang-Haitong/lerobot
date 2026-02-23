@@ -64,7 +64,7 @@ from lerobot.processor.factory import make_default_processors
 from lerobot.utils.constants import ACTION, OBS_STR
 from lerobot.utils.control_utils import init_keyboard_listener, is_headless
 from lerobot.utils.robot_utils import precise_sleep
-from lerobot.utils.utils import init_logging, log_say
+from lerobot.utils.utils import init_logging, log_say, move_cursor_up
 
 from ros2_teleop import ROS2Teleoperator, ROS2TeleopConfig
 from so101_turtlebot4_robot import SO101TurtleBot4Config, SO101TurtleBot4Robot
@@ -85,8 +85,11 @@ def record_loop(
     dataset: LeRobotDataset | None = None,
     control_time_s: float | None = None,
     single_task: str | None = None,
+    display_data: bool = False,
 ) -> None:
     """Run one episode (or reset phase) following the lerobot_record.py data flow."""
+    if display_data:
+        display_len = max(len(k) for k in robot.action_features)
     timestamp = 0.0
     start_episode_t = time.perf_counter()
 
@@ -121,6 +124,13 @@ def record_loop(
             frame = {**observation_frame, **action_frame, "task": single_task}
             dataset.add_frame(frame)
 
+        if display_data:
+            print("\n" + "-" * (display_len + 12))
+            print(f"{'KEY':<{display_len}} | {'VALUE':>8}")
+            for k, v in sorted(act_processed.items()):
+                print(f"{k:<{display_len}} | {float(v):>8.3f}")
+            move_cursor_up(len(act_processed) + 3)
+
         dt_s = time.perf_counter() - start_loop_t
         sleep_time_s = 1.0 / fps - dt_s
         if sleep_time_s < 0:
@@ -153,6 +163,7 @@ def main():
     parser.add_argument("--num_image_writer_threads_per_camera", type=int, default=4, help="Threads per camera for image writing.")
     parser.add_argument("--push_to_hub", action="store_true", help="Upload dataset to HuggingFace Hub after recording.")
     parser.add_argument("--resume", action="store_true", help="Resume recording on an existing dataset.")
+    parser.add_argument("--display_data", action="store_true", help="Print live action values to terminal.")
     parser.add_argument("--play_sounds", action="store_true", default=True, help="Audio feedback for episode events.")
     parser.add_argument("--no_play_sounds", action="store_true", help="Disable audio feedback.")
     # Follower arm settings
@@ -260,6 +271,7 @@ def main():
                     dataset=dataset,
                     control_time_s=args.episode_time_s,
                     single_task=args.single_task,
+                    display_data=args.display_data,
                 )
 
                 # Reset phase between episodes (no recording)
@@ -277,6 +289,7 @@ def main():
                         robot_observation_processor=robot_observation_processor,
                         control_time_s=args.reset_time_s,
                         single_task=args.single_task,
+                        display_data=args.display_data,
                     )
 
                 if events["rerecord_episode"]:
