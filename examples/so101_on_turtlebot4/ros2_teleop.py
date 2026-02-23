@@ -169,7 +169,7 @@ class ROS2Teleoperator(Teleoperator):
             arm_cmd = dict(self._arm_cmd)
             base_cmd = dict(self._base_cmd)
 
-        action: dict[str, float] = {}
+        action: dict[str, float] = {k: 0.0 for k in self.action_features}
         for k, v in arm_cmd.items():
             action[f"{_ARM}{k}"] = float(v)
         if self.config.base_topic is not None:
