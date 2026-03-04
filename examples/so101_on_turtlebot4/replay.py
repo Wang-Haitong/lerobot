@@ -135,6 +135,7 @@ def main():
             odom_topic=args.odom_topic,
             max_linear_vel=args.max_linear_vel,
             max_angular_vel=args.max_angular_vel,
+            cameras={},  # No cameras needed for replay
         )
     )
 
