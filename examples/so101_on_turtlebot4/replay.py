@@ -15,11 +15,12 @@
 
 """Replay recorded trajectories for SO-101 + TurtleBot4 on the robot side.
 
-This script follows the official LeRobot replay flow:
+Follows the same pattern as ``examples/lekiwi/replay.py``: load actions from
+the dataset and send them directly to the robot.  No action processor or
+observation feedback is needed because recorded actions are already in the
+follower's joint-position / base-velocity space.
 
-    dataset action -> robot action processor -> robot.send_action()
-
-Expected deployment is the same as distributed recording:
+Expected deployment (same as distributed recording):
     - Run this script on the TurtleBot4 / Pi
     - Follower arm is connected to the Pi over USB
     - Base commands are sent directly to /cmd_vel through TurtleBot4Robot
@@ -30,7 +31,6 @@ import logging
 import time
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.processor import make_default_robot_action_processor
 from lerobot.utils.constants import ACTION
 from lerobot.utils.robot_utils import precise_sleep
 from lerobot.utils.utils import init_logging, log_say
@@ -40,43 +40,6 @@ from so101_turtlebot4_robot import SO101TurtleBot4Config, SO101TurtleBot4Robot
 logger = logging.getLogger(__name__)
 _ARM = "arm_"
 _BASE = "base_"
-
-
-def _build_replay_action(action, action_names: list[str]) -> dict[str, float]:
-    replay_action: dict[str, float] = {}
-    for idx, name in enumerate(action_names):
-        replay_action[name] = float(action[idx])
-    return replay_action
-
-
-def _normalize_action_keys(
-    raw_action: dict[str, float],
-    expected_keys: set[str],
-    arm_unprefixed_keys: set[str],
-    base_unprefixed_keys: set[str],
-) -> dict[str, float]:
-    normalized: dict[str, float] = {}
-
-    for key, value in raw_action.items():
-        candidates = [key]
-
-        key_no_main = key.removeprefix("main_")
-        if key_no_main != key:
-            candidates.append(key_no_main)
-
-        for k in (key, key_no_main):
-            if not k.startswith((_ARM, _BASE)):
-                if k in arm_unprefixed_keys:
-                    candidates.append(f"{_ARM}{k}")
-                if k in base_unprefixed_keys:
-                    candidates.append(f"{_BASE}{k}")
-
-        for candidate in candidates:
-            if candidate in expected_keys:
-                normalized[candidate] = float(value)
-                break
-
-    return normalized
 
 
 def main():
@@ -139,7 +102,6 @@ def main():
         )
     )
 
-    robot_action_processor = make_default_robot_action_processor()
     dataset = LeRobotDataset(args.repo_id, root=args.root, episodes=[args.episode])
 
     # Episode-aware filtering is required for v3 datasets where frames are chunked.
@@ -149,9 +111,6 @@ def main():
 
     actions = episode_frames.select_columns(ACTION)
     action_names = list(dataset.features[ACTION]["names"])
-    expected_keys = set(robot.action_features)
-    arm_unprefixed_keys = {k.removeprefix(_ARM) for k in expected_keys if k.startswith(_ARM)}
-    base_unprefixed_keys = {k.removeprefix(_BASE) for k in expected_keys if k.startswith(_BASE)}
 
     replay_fps = dataset.fps
     if args.fps is not None:
@@ -175,53 +134,28 @@ def main():
     robot.connect()
 
     try:
-        log_say(f"Replaying episode {args.episode}", play_sounds, blocking=True)
-        arm_key_found = False
+        log_say(f"Replaying episode {args.episode}", play_sounds)
         for idx in range(len(episode_frames)):
             t0 = time.perf_counter()
 
-            raw_action = _build_replay_action(actions[idx][ACTION], action_names)
-            normalized_raw_action = _normalize_action_keys(
-                raw_action,
-                expected_keys=expected_keys,
-                arm_unprefixed_keys=arm_unprefixed_keys,
-                base_unprefixed_keys=base_unprefixed_keys,
-            )
+            # Build action dict from dataset (same pattern as examples/lekiwi/replay.py)
+            action = {
+                name: float(actions[idx][ACTION][i])
+                for i, name in enumerate(action_names)
+            }
 
-            if not normalized_raw_action and idx == 0:
-                raise RuntimeError(
-                    "No replay action keys matched robot action features. "
-                    f"Dataset keys={sorted(raw_action.keys())}, expected keys={sorted(expected_keys)}."
-                )
-
-            robot_obs = robot.get_observation()
-            processed_action = robot_action_processor((normalized_raw_action, robot_obs))
-
-            if args.enable_base:
-                action_to_send = processed_action
-            else:
-                action_to_send = {
-                    key: value for key, value in processed_action.items() if not key.startswith(_BASE)
-                }
-
-            if any(key.startswith(_ARM) for key in action_to_send):
-                arm_key_found = True
+            # Filter out base keys unless --enable_base is set
+            if not args.enable_base:
+                action = {k: v for k, v in action.items() if not k.startswith(_BASE)}
 
             if args.display_data and idx % 5 == 0:
-                logger.info("Frame %s action: %s", idx, action_to_send)
+                logger.info("Frame %s action: %s", idx, action)
 
-            _ = robot.send_action(action_to_send)
+            _ = robot.send_action(action)
 
             precise_sleep(max(1.0 / replay_fps - (time.perf_counter() - t0), 0.0))
-
-        if not arm_key_found:
-            raise RuntimeError(
-                "Replay finished without any arm commands being sent. "
-                "Check dataset action schema and replay logs."
-            )
     finally:
         if robot.is_connected:
-            # Always issue an explicit base stop for safety at replay end/interruption.
             try:
                 _ = robot.send_action({"base_linear.vel": 0.0, "base_angular.vel": 0.0})
             except Exception:
