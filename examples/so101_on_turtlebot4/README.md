@@ -10,6 +10,7 @@ Teleoperation and data recording for a SO-ARM 101 mounted on a TurtleBot4 mobile
 | `leader_teleop.py` | Leader-side node for distributed teleoperation — publishes arm commands over ROS2 (runs on server/laptop). |
 | `follower_node.py` | Follower-side node for distributed teleoperation without recording (runs on Pi). |
 | `record.py` | Data recording for distributed teleoperation (runs on Pi, saves to LeRobotDataset). |
+| `replay.py` | Replay recorded trajectories from a LeRobotDataset on the Pi (arm-only by default, optional base replay). |
 | `ros2_teleop.py` | ROS2-based teleoperator — receives arm commands from leader and base commands from `/cmd_vel`. |
 | `so101_keyboard_teleop.py` | Composite teleoperator combining SO-101 leader arm + keyboard (used by single-machine mode). |
 | `so101_turtlebot4_robot.py` | Composite robot combining SO-101 follower arm + TurtleBot4 base. |
@@ -92,6 +93,33 @@ Episode controls (keyboard on Pi, requires display):
 | Right arrow | End current episode early |
 | Left arrow | Re-record current episode |
 | ESC | Stop recording |
+
+### Replay recorded trajectories (robot-side Pi)
+
+Run replay on the same robot-side setup used for distributed recording
+(follower arm + TurtleBot4 on the Pi).
+
+By default, replay sends **arm actions only** for safer testing.
+
+```bash
+# On the Pi:
+python replay.py \
+    --repo_id user/so101_turtlebot4_pick_cube \
+    --episode 0 \
+    --follower_port /dev/ttyACM0
+```
+
+To replay both arm and base motion exactly as recorded, opt in with `--enable_base`:
+
+```bash
+python replay.py \
+    --repo_id user/so101_turtlebot4_pick_cube \
+    --episode 0 \
+    --follower_port /dev/ttyACM0 \
+    --enable_base
+```
+
+If your dataset is stored outside the default LeRobot cache, add `--root /path/to/dataset_root`.
 
 ### Single-machine arm + base (testing)
 
