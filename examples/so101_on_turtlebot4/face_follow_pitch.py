@@ -101,7 +101,6 @@ def run_face_follow_loop(robot, get_frame_fn, should_stop_fn, draw_fn=None):
 
 def main_standalone(port: str, cam_index: int):
     config = SOFollowerRobotConfig(
-        type="so101_follower",
         port=port,
         id="face_follow",
         cameras={},
@@ -156,7 +155,6 @@ def main_standalone(port: str, cam_index: int):
 def main_standalone_headless(port: str, cam_index: int):
     """Run face-follow without any GUI (for Pi / headless)."""
     config = SOFollowerRobotConfig(
-        type="so101_follower",
         port=port,
         id="face_follow",
         cameras={},
