@@ -16,7 +16,7 @@
 """Face-follow pitch: control SO-101 wrist_flex from a camera using OpenCV face detection.
 
 Standalone usage (run on the machine with the arm and camera, e.g. Pi):
-    python face_follow_pitch.py [--port /dev/ttyACM0] [--cam-index 0]
+    python face_follow_pitch.py [--port /dev/ttyACM0] [--cam-index 0] [--headless]
 
 To expose this as a primitive from the roman actions_ws executor, run the
 arm_face_follow node on the Pi (see actions_ws docs).
@@ -153,6 +153,43 @@ def main_standalone(port: str, cam_index: int):
         cv2.destroyAllWindows()
 
 
+def main_standalone_headless(port: str, cam_index: int):
+    """Run face-follow without any GUI (for Pi / headless)."""
+    config = SOFollowerRobotConfig(
+        type="so101_follower",
+        port=port,
+        id="face_follow",
+        cameras={},
+    )
+    robot = make_robot_from_config(config)
+    robot.connect(calibrate=True)
+
+    cap = cv2.VideoCapture(cam_index)
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
+    if face_cascade.empty():
+        raise RuntimeError("Could not load OpenCV face cascade")
+
+    def get_frame():
+        ok, frame = cap.read()
+        return (frame, time.time()) if ok else (None, time.time())
+
+    stop = False
+
+    def should_stop():
+        return stop
+
+    try:
+        for _ in run_face_follow_loop(robot, get_frame, should_stop, draw_fn=None):
+            # No imshow; run until external interrupt (e.g. Ctrl+C)
+            pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        cap.release()
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Face-follow pitch control for SO-101 wrist using OpenCV face detection.",
@@ -169,8 +206,16 @@ def main():
         default=CAM_INDEX_DEFAULT,
         help="OpenCV camera index.",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="No GUI window (for Pi / TurtleBot4 headless).",
+    )
     args = parser.parse_args()
-    main_standalone(args.port, args.cam_index)
+    if args.headless:
+        main_standalone_headless(args.port, args.cam_index)
+    else:
+        main_standalone(args.port, args.cam_index)
 
 
 if __name__ == "__main__":
